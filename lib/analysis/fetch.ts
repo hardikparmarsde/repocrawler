@@ -30,8 +30,8 @@ export async function fetchAllRepoData(
     maintainers,
   ] = await Promise.all([
     fetchLanguages(gh, owner, repo),
-    fetchIssues(gh, owner, repo, { labels: ["good first issue"], limit: 30 }),
-    fetchIssues(gh, owner, repo, { labels: ["help wanted"], limit: 30 }),
+    fetchIssues(gh, owner, repo, { labels: ["good first issue"], limit: 8 }),
+    fetchIssues(gh, owner, repo, { labels: ["help wanted"], limit: 7 }),
     fetchRecentMergedPrs(gh, owner, repo, 50),
     fetchFileRaw(gh, owner, repo, "CONTRIBUTING.md"),
     fetchFileRaw(gh, owner, repo, "README.md"),

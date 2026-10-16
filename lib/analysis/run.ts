@@ -72,12 +72,26 @@ export async function runAnalysis(analysisId: string): Promise<void> {
     // Phase 2 — fetch all GitHub data in parallel.
     const raw = await fetchAllRepoData(row.owner, row.repo, token);
 
-    // Phase 3 — score issues in parallel (concurrency 5 to be gentle on rate limits).
-    const scored = await limitParallel(raw.issues, 5, async (issue) => {
+    // Phase 3 — score issues sequentially with a per-call delay to respect
+    // Gemini free-tier rate limits (5 RPM for gemini-3.8-flash).
+    // 13s between calls = ~4.5 RPM, safely under the limit with buffer for synthesis.
+    const RATE_LIMIT_DELAY_MS = 13_000;
+    const scored: Array<{
+      score: IssueScore;
+      costCents: number;
+      tokensIn: number;
+      tokensOut: number;
+    }> = [];
+    console.log(`[runAnalysis] ${row.owner}/${row.repo}: scoring ${raw.issues.length} issues sequentially...`);
+    for (let i = 0; i < raw.issues.length; i++) {
+      const issue = raw.issues[i];
+      const t0 = Date.now();
       try {
-        return await scoreIssue(raw, issue);
+        scored.push(await scoreIssue(raw, issue));
+        console.log(`[runAnalysis]   ✓ scored #${issue.number} in ${Math.round((Date.now() - t0) / 1000)}s (${i + 1}/${raw.issues.length})`);
       } catch (e) {
-        return {
+        console.log(`[runAnalysis]   ✗ scored #${issue.number} failed: ${e instanceof Error ? e.message.slice(0, 100) : e}`);
+        scored.push({
           score: {
             issueNumber: issue.number,
             difficulty: 3 as const,
@@ -88,9 +102,15 @@ export async function runAnalysis(analysisId: string): Promise<void> {
           costCents: 0,
           tokensIn: 0,
           tokensOut: 0,
-        };
+        });
       }
-    });
+      // Delay before next scoring call (skip after the last one).
+      if (i < raw.issues.length - 1) {
+        await new Promise((r) => setTimeout(r, RATE_LIMIT_DELAY_MS));
+      }
+    }
+    // Buffer before the synthesis call to let the per-minute window reset.
+    await new Promise((r) => setTimeout(r, RATE_LIMIT_DELAY_MS));
 
     const scores: IssueScore[] = scored.map((s) => s.score);
     const scorerTokensIn = scored.reduce((a, b) => a + b.tokensIn, 0);

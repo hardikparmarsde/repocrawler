@@ -135,11 +135,36 @@ export async function synthesizeAll(
   return synthesizeAllAnthropic(raw, profile, scores);
 }
 
+// Normalize LLM snake_case keys → camelCase expected by the UI.
+function normalizeConventions(raw: unknown): Conventions {
+  const fallback: Conventions = {
+    prTitleFormat: "unknown",
+    commitStyle: "unknown",
+    testsRequired: "unknown",
+    avgMergeTime: { docs: "?", bugfix: "?", feature: "?" },
+    localDevCommand: "see README",
+  };
+  if (!raw || typeof raw !== "object") return fallback;
+  const c = raw as Record<string, unknown>;
+  const amt = (c.avg_merge_time ?? c.avgMergeTime) as Record<string, unknown> | undefined;
+  return {
+    prTitleFormat: String(c.pr_title_format ?? c.prTitleFormat ?? fallback.prTitleFormat),
+    commitStyle: String(c.commit_style ?? c.commitStyle ?? fallback.commitStyle),
+    testsRequired: String(c.tests_required ?? c.testsRequired ?? fallback.testsRequired),
+    avgMergeTime: {
+      docs: String(amt?.docs ?? fallback.avgMergeTime.docs),
+      bugfix: String(amt?.bugfix ?? fallback.avgMergeTime.bugfix),
+      feature: String(amt?.feature ?? fallback.avgMergeTime.feature),
+    },
+    localDevCommand: String(c.local_dev_command ?? c.localDevCommand ?? fallback.localDevCommand),
+  };
+}
+
 function toSynthesisResult(
   parsed: {
     summary?: string;
     codebase_map?: CodebaseMapEntry[];
-    conventions?: Conventions;
+    conventions?: unknown;
     my_pick_issue_number?: number | null;
     my_pick_justification?: string;
   },
@@ -148,16 +173,7 @@ function toSynthesisResult(
   return {
     summary: String(parsed.summary ?? "Analysis incomplete."),
     codebaseMap: (parsed.codebase_map ?? []).slice(0, 10),
-    conventions:
-      parsed.conventions && typeof parsed.conventions === "object"
-        ? parsed.conventions
-        : ({
-            prTitleFormat: "unknown",
-            commitStyle: "unknown",
-            testsRequired: "unknown",
-            avgMergeTime: { docs: "?", bugfix: "?", feature: "?" },
-            localDevCommand: "see README",
-          } as Conventions),
+    conventions: normalizeConventions(parsed.conventions),
     myPick:
       parsed.my_pick_issue_number != null
         ? {

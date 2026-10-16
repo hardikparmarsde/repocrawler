@@ -27,10 +27,11 @@ export function geminiCostCents(): number {
 
 // Retry wrapper for Gemini calls. Handles transient 429/503 by waiting
 // with exponential backoff. Final attempt lets the error through.
+// For 429 RESOURCE_EXHAUSTED we parse Google's retryDelay hint when present.
 export async function geminiRetry<T>(
   fn: () => Promise<T>,
   attempts = 4,
-  baseDelayMs = 1500,
+  baseDelayMs = 2_000,
 ): Promise<T> {
   let lastErr: unknown;
   for (let i = 0; i < attempts; i++) {
@@ -39,12 +40,24 @@ export async function geminiRetry<T>(
     } catch (err) {
       lastErr = err;
       const msg = err instanceof Error ? err.message : String(err);
-      const transient =
-        msg.includes("503") ||
-        msg.includes("429") ||
-        /UNAVAILABLE|RESOURCE_EXHAUSTED|high demand/i.test(msg);
-      if (!transient || i === attempts - 1) throw err;
-      const delay = baseDelayMs * Math.pow(2, i) + Math.random() * 500;
+      const isRateLimit =
+        msg.includes("429") || /RESOURCE_EXHAUSTED/i.test(msg);
+      const isUnavailable =
+        msg.includes("503") || /UNAVAILABLE|high demand/i.test(msg);
+      if (!isRateLimit && !isUnavailable) throw err;
+      if (i === attempts - 1) throw err;
+
+      // Prefer Google's suggested retryDelay if we can extract it.
+      let delay: number;
+      const retryHint = msg.match(/retryDelay"?\s*:\s*"?(\d+)s/i);
+      if (isRateLimit && retryHint) {
+        delay = (Number(retryHint[1]) + 2) * 1000;
+      } else {
+        delay = baseDelayMs * Math.pow(2, i) + Math.random() * 500;
+      }
+      console.log(
+        `[geminiRetry] attempt ${i + 1}/${attempts} failed (${isRateLimit ? "429" : "503"}), waiting ${(delay / 1000).toFixed(1)}s...`,
+      );
       await new Promise((r) => setTimeout(r, delay));
     }
   }
